@@ -6,6 +6,7 @@
  * activation to record/activation, and cleanup to deletescript.
  */
 
+#include <stdlib.h>
 #include <string.h>
 
 #include "bypass/path_a.h"
@@ -15,10 +16,7 @@
 #include "activation/record.h"
 #include "util/log.h"
 
-/* Forward declarations from path_a_jailbreak.c */
-int path_a_load_ramdisk(device_info_t *dev);
-int path_a_jailbreak(device_info_t *dev);
-int path_a_replace_mobileactivationd(device_info_t *dev);
+#include "bypass/path_a_internal.h"
 
 /* ------------------------------------------------------------------ */
 /* Module probe/execute                                                */

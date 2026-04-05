@@ -12,6 +12,7 @@
 
 #include <string.h>
 
+#include "bypass/path_a_internal.h"
 #include "device/device.h"
 #include "util/log.h"
 
