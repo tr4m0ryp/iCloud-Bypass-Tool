@@ -4,6 +4,8 @@
  * Included by chip_db_table.h inside the g_chip_table[] array.
  * Do not include this file directly. All values from gaster.
  */
+#ifndef CHIP_DB_TABLE_ROP_H
+#define CHIP_DB_TABLE_ROP_H
 
     /* ================================================================ */
     /* ARM64 chips with ROP gadgets (A9X, A10, A10X, A11, T2)          */
@@ -44,7 +46,7 @@
     /* gaster: iBoot-2696.0.0.1.33 */
     {
         .cpid = 0x8010,
-        .name = "A10",
+        .name = "A10 (iBoot-2696)",
         .marketing = "iPhone 7 / iPod touch 7G",
         .checkm8_vulnerable = 1,
         .config_overwrite_pad = 0x5C0,
@@ -183,4 +185,4 @@
 };
 /* clang-format on */
 
-#endif /* CHIP_DB_TABLE_H */
+#endif /* CHIP_DB_TABLE_ROP_H */

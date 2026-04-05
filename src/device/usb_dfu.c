@@ -118,13 +118,12 @@ int usb_dfu_find(libusb_device_handle **handle)
         return -1;
     }
 
+    libusb_detach_kernel_driver(*handle, 0);  /* Linux: detach kernel driver; ignore error */
+
     /* Claim interface 0 (DFU interface) */
     int ret = libusb_claim_interface(*handle, 0);
-    if (ret != LIBUSB_SUCCESS) {
-        log_warn("failed to claim interface 0: %s (continuing anyway)",
-                 libusb_strerror(ret));
-        /* Non-fatal: macOS may have the kernel driver attached */
-    }
+    if (ret != LIBUSB_SUCCESS)
+        log_warn("failed to claim interface 0: %s (continuing anyway)", libusb_strerror(ret));
 
     return 0;
 }
@@ -141,16 +140,19 @@ int usb_dfu_find(libusb_device_handle **handle)
 static int parse_hex_field(const char *serial, const char *key, uint64_t *out)
 {
     const char *p;
+    char *endptr;
 
     if (!serial || !key || !out)
         return -1;
-
     p = strstr(serial, key);
     if (!p)
         return -1;
-
-    p += strlen(key);
-    *out = strtoull(p, NULL, 16);
+    endptr = NULL;
+    *out = strtoull(p, &endptr, 16);
+    if (!endptr || endptr == p) {
+        log_warn("parse_hex_field: garbage value for key '%s'", key);
+        *out = 0;
+    }
     return 0;
 }
 
@@ -178,6 +180,8 @@ int usb_dfu_read_info(libusb_device_handle *handle, uint32_t *cpid,
         return -1;
     }
 
+    if (ret >= (int)sizeof(buf))
+        ret = (int)sizeof(buf) - 1;
     buf[ret] = '\0';
     log_debug("DFU serial string: %s", (char *)buf);
 
@@ -217,23 +221,20 @@ int usb_dfu_read_info(libusb_device_handle *handle, uint32_t *cpid,
 int usb_dfu_send(libusb_device_handle *handle, const void *data, size_t len)
 {
     size_t sent = 0;
+    uint16_t block_num = 0;
     int ret;
 
     if (!handle || (!data && len > 0))
         return -1;
 
-    /*
-     * DFU DNLOAD: bmRequestType = host-to-device, class, interface
-     * bRequest = DFU_DNLOAD (1), wValue = block number, wIndex = 0
-     * Send in chunks of DFU_MAX_TRANSFER.
-     */
+    /* DFU DNLOAD: send in DFU_MAX_TRANSFER chunks; wValue is block number (DFU spec). */
     while (sent < len) {
         size_t chunk = len - sent;
         if (chunk > DFU_MAX_TRANSFER)
             chunk = DFU_MAX_TRANSFER;
 
         ret = usb_ctrl_transfer(handle, DFU_REQUEST_OUT, DFU_DNLOAD,
-                                0, 0, (unsigned char *)data + sent,
+                                block_num, 0, (unsigned char *)data + sent,
                                 (uint16_t)chunk, DFU_USB_TIMEOUT);
         if (ret < 0) {
             log_error("DFU DNLOAD failed at offset %zu: %s",
@@ -243,7 +244,8 @@ int usb_dfu_send(libusb_device_handle *handle, const void *data, size_t len)
         }
 
         sent += (size_t)ret;
-        log_debug("DFU DNLOAD: sent %zu / %zu bytes", sent, len);
+        log_debug("DFU DNLOAD block %u: sent %zu / %zu bytes", (unsigned)block_num, sent, len);
+        block_num++;
     }
 
     return 0;

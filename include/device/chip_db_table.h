@@ -40,11 +40,11 @@ static const chip_info_t g_chip_table[] = {
         .payload_dest_armv7   = 0x34039800,
     },
 
-    /* CPID 0x8950 -- iBoot-1145.3 */
+    /* CPID 0x8950 -- S5L8950 (A5-class), Apple TV 3rd gen, iBoot-1145.3 */
     {
         .cpid = 0x8950,
-        .name = "A9",
-        .marketing = "Apple TV (3rd gen)",
+        .name = "S5L8950",
+        .marketing = "Apple TV (3rd gen) (A5-class)",
         .checkm8_vulnerable = 1,
         .config_large_leak    = 659,
         .config_overwrite_pad = 0x640,
@@ -61,11 +61,11 @@ static const chip_info_t g_chip_table[] = {
         .payload_dest_armv7   = 0x10079800,
     },
 
-    /* CPID 0x8955 -- iBoot-1145.3.3 */
+    /* CPID 0x8955 -- S5L8955 (A5-class), Apple TV 3rd gen rev A, iBoot-1145.3.3 */
     {
         .cpid = 0x8955,
-        .name = "A9",
-        .marketing = "Apple TV (3rd gen, rev A)",
+        .name = "S5L8955",
+        .marketing = "Apple TV (3rd gen, rev A) (A5-class)",
         .checkm8_vulnerable = 1,
         .config_large_leak    = 659,
         .config_overwrite_pad = 0x640,
@@ -199,7 +199,7 @@ static const chip_info_t g_chip_table[] = {
     /* gaster: iBoot-1704.10 */
     {
         .cpid = 0x8960,
-        .name = "A10",
+        .name = "A10 (iBoot-1704)",
         .marketing = "iPhone 7 / iPhone 7 Plus",
         .checkm8_vulnerable = 1,
         .config_large_leak    = 7936,
@@ -268,3 +268,5 @@ static const chip_info_t g_chip_table[] = {
 
 /* Part 2 continues in chip_db_table_rop.h (ROP chips + A12+ entries) */
 #include "device/chip_db_table_rop.h"
+
+#endif /* CHIP_DB_TABLE_H */
