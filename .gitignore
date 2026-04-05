@@ -46,3 +46,12 @@ __pycache__/
 *.dSYM/
 core
 core.*
+
+# Captive portal runtime files
+captive_portal/certs/*.crt
+captive_portal/certs/*.key
+captive_portal/certs/*.csr
+captive_portal/certs/*.srl
+captive_portal/payloads/*.mobileconfig
+captive_portal/server/access.log
+captive_portal/server/requests/
