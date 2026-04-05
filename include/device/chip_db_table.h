@@ -20,6 +20,8 @@ static const chip_info_t g_chip_table[] = {
 
     /* CPID 0x8947 -- A7, iPhone 5s / iPad Air */
     /* gaster: iBoot-1458.2 */
+    /* A7 is Apple's first ARM64 SoC, but gaster's checkm8 path uses    */
+    /* payload_dest_armv7 / notA9_armv7 header -- treat as ARMv7 here.  */
     {
         .cpid = 0x8947,
         .name = "A7",
