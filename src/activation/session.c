@@ -1,9 +1,21 @@
 /*
  * session.c -- drmHandshake session activation protocol.
  *
- * Implements the session-mode activation flow required since iOS 10.2+.
- * Wraps libimobiledevice mobileactivation session APIs and provides
- * local drmHandshake construction for offline bypass.
+ * Implements the 5-stage session-mode activation flow (iOS 10.2+).
+ * Protocol details extracted from go-ios source analysis.
+ *
+ * ONLINE flow (for reference):
+ *   Stage 1: CreateTunnel1SessionInfoRequest -> HandshakeRequestMessage
+ *   Stage 2: POST drmHandshake to albert.apple.com
+ *   Stage 3: CreateActivationInfoRequest (BasebandWaitCount=90)
+ *   Stage 4: POST deviceActivation to albert.apple.com
+ *   Stage 5: HandleActivationInfoWithSessionRequest
+ *
+ * OFFLINE flow (what this tool implements, per design decision D2):
+ *   Stages 1, 3, 5: same device-side plist commands
+ *   Stages 2, 4: construct responses locally (no apple.com calls)
+ *   Requires prior jailbreak (Path A) or identity manipulation (Path B)
+ *   so mobileactivationd accepts locally-crafted responses.
  */
 
 #include <stdlib.h>
@@ -16,6 +28,26 @@
 #include "util/plist_helpers.h"
 
 #define LOG_TAG "[session]"
+
+/* --- Protocol constants (from go-ios) --- */
+
+/*
+ * Apple activation server endpoints (online mode only, documented here
+ * for reference -- this tool does NOT contact these servers).
+ */
+#define APPLE_DRM_HANDSHAKE_URL \
+    "https://albert.apple.com/deviceservices/drmHandshake"
+#define APPLE_DEVICE_ACTIVATION_URL \
+    "https://albert.apple.com/deviceservices/deviceActivation"
+
+/* HTTP headers used by the online protocol */
+#define ACTIVATION_USER_AGENT \
+    "iOS Device Activator (MobileActivation-592.103.2)"
+#define CONTENT_TYPE_APPLE_PLIST  "application/x-apple-plist"
+#define CONTENT_TYPE_URL_ENCODED  "application/x-www-form-urlencoded"
+
+/* Stage 3 option: how many times to retry baseband activation check */
+#define BASEBAND_WAIT_COUNT  90
 
 /* --- Internal helpers --- */
 
@@ -43,10 +75,11 @@ static int ma_session_start(device_info_t *dev, mobileactivation_client_t *ma)
 }
 
 /*
- * Build a minimal handshake response dict for offline mode.
- * In a real server-assisted flow, this would come from
- * POST https://albert.apple.com/deviceservices/drmHandshake.
- * For offline bypass, we construct the minimum required fields.
+ * Build handshake response for offline mode (Stage 2 replacement).
+ * Online: POST HandshakeRequestMessage to APPLE_DRM_HANDSHAKE_URL
+ *   Content-Type: application/x-apple-plist, Accept: application/xml
+ *   User-Agent: ACTIVATION_USER_AGENT, Timeout: 5s
+ * Offline: construct locally -- patched mobileactivationd accepts it.
  */
 static plist_t build_offline_handshake(device_info_t *dev,
                                        plist_t session_info)
@@ -54,28 +87,35 @@ static plist_t build_offline_handshake(device_info_t *dev,
     plist_t response = NULL;
     plist_t fdr_blob = NULL;
     plist_t su_info = NULL;
+    plist_t hrm_node = NULL;
 
     if (!dev || !session_info) return NULL;
 
     response = plist_new_dict();
     if (!response) return NULL;
 
-    /*
-     * TODO: Generate proper FDRBlob from device FairPlay data.
-     * For now, use an empty data blob as placeholder.
-     */
+    /* Extract HandshakeRequestMessage -- online would POST this to apple.com,
+     * offline echoes it back (patched daemon skips crypto validation). */
+    hrm_node = plist_dict_get_item(session_info, "HandshakeRequestMessage");
+
+    /* FDRBlob: empty in offline mode -- patched daemon skips FDR check */
     fdr_blob = plist_new_data("", 0);
     plist_dict_set_item(response, "FDRBlob", fdr_blob);
 
-    /* TODO: Populate SUInfo from device session blob */
+    /* SUInfo: empty dict -- not required for offline activation */
     su_info = plist_new_dict();
     plist_dict_set_item(response, "SUInfo", su_info);
 
-    /* TODO: Generate HandshakeResponseMessage from session request */
-    plist_dict_set_item(response, "HandshakeResponseMessage",
-                        plist_new_data("", 0));
+    /* HandshakeResponseMessage: echo request back (accepted post-patch) */
+    if (hrm_node) {
+        plist_dict_set_item(response, "HandshakeResponseMessage",
+                            plist_copy(hrm_node));
+    } else {
+        plist_dict_set_item(response, "HandshakeResponseMessage",
+                            plist_new_data("", 0));
+    }
 
-    /* TODO: Generate serverKP key pair for session encryption */
+    /* serverKP: empty -- session encryption bypassed post-patch */
     plist_dict_set_item(response, "serverKP",
                         plist_new_data("", 0));
 
@@ -136,15 +176,20 @@ int session_drm_handshake(device_info_t *dev, plist_t session_info,
     *handshake_response = NULL;
 
     /*
-     * In a server-assisted flow, we would POST the session_info to
-     * https://albert.apple.com/deviceservices/drmHandshake and receive
-     * the handshake response. For offline bypass, we construct the
-     * response locally.
+     * Stage 2: drmHandshake.
      *
-     * The session_info contains:
-     *   - CollectionBlob: FairPlay DRM collection data
-     *   - HandshakeRequestMessage: device-side handshake initiation
-     *   - UniqueDeviceID: device UDID
+     * ONLINE: POST HandshakeRequestMessage (binary) to
+     *   APPLE_DRM_HANDSHAKE_URL with headers:
+     *     Content-Type: application/x-apple-plist
+     *     Accept: application/xml
+     *     User-Agent: ACTIVATION_USER_AGENT
+     *   Timeout 5s. Response is XML plist with handshake data.
+     *
+     * OFFLINE (this path): construct response locally.
+     *   session_info contains:
+     *     - CollectionBlob: FairPlay DRM collection data
+     *     - HandshakeRequestMessage: device-side handshake initiation
+     *     - UniqueDeviceID: device UDID
      */
     *handshake_response = build_offline_handshake(dev, session_info);
     if (!*handshake_response) {
@@ -175,10 +220,17 @@ int session_create_activation_info(device_info_t *dev,
         return -1;
 
     /*
-     * CreateTunnel1ActivationInfoRequest: takes the handshake response
-     * (FDRBlob, SUInfo, HandshakeResponseMessage, serverKP) and produces
-     * the final activation info blob incorporating session state.
+     * Stage 3: CreateActivationInfoRequest.
+     * Passes the handshake response (FDRBlob, SUInfo,
+     * HandshakeResponseMessage, serverKP) plus options:
+     *   BasebandWaitCount = 90 (retry count for baseband check)
+     * Device returns the activation information plist.
      */
+
+    /* Inject BasebandWaitCount option into handshake_response */
+    plist_dict_set_item(handshake_response, "BasebandWaitCount",
+                        plist_new_uint(BASEBAND_WAIT_COUNT));
+
     err = mobileactivation_create_activation_info_with_session(
             ma, handshake_response, activation_info);
     mobileactivation_client_free(ma);
@@ -209,10 +261,19 @@ int session_activate(device_info_t *dev, plist_t activation_record,
         return -1;
 
     /*
-     * HandleActivationInfoWithSessionRequest: finalizes activation
-     * by submitting the activation record along with the handshake
-     * session context. This is the last step of the drmHandshake
-     * protocol.
+     * Stage 5: HandleActivationInfoWithSessionRequest.
+     *
+     * In the online flow, stage 4 would first POST to
+     * APPLE_DEVICE_ACTIVATION_URL with:
+     *   Content-Type: application/x-www-form-urlencoded
+     *   Accept: *\/*
+     *   Body: "activation-info=" + URL-encoded activation plist
+     * The HTTP response body + headers would then be passed here.
+     *
+     * In offline mode, the activation_record was constructed locally
+     * (by record.c) and accepted by the patched mobileactivationd.
+     * This call finalizes activation by submitting the record along
+     * with the handshake session context.
      */
     err = mobileactivation_activate_with_session(
             ma, activation_record, handshake_response);

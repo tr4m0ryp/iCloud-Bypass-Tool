@@ -4,11 +4,15 @@
  * Wraps libimobiledevice's session-mode mobileactivation API for the
  * drmHandshake protocol required since iOS 10.2+.
  *
- * Flow:
- *   1. session_get_info()                -> device session blob
- *   2. session_drm_handshake()           -> local handshake response
- *   3. session_create_activation_info()  -> activation info with session
- *   4. session_activate()                -> finalize activation
+ * Protocol stages (from go-ios):
+ *   1. CreateTunnel1SessionInfoRequest   -> HandshakeRequestMessage blob
+ *   2. drmHandshake (offline or online)  -> handshake response
+ *   3. CreateActivationInfoRequest       -> activation info plist
+ *   4. deviceActivation (offline/online) -> activation record
+ *   5. HandleActivationInfoWithSessionRequest -> finalize
+ *
+ * This tool uses OFFLINE mode (design decision D2): stages 2 and 4
+ * construct responses locally instead of calling albert.apple.com.
  */
 
 #ifndef SESSION_H
@@ -40,8 +44,8 @@ int session_drm_handshake(device_info_t *dev, plist_t session_info,
 
 /*
  * session_create_activation_info -- Create activation info with session.
- * Sends CreateTunnel1ActivationInfoRequest using the handshake response
- * to produce the activation info blob.
+ * Sends CreateActivationInfoRequest with BasebandWaitCount=90 and the
+ * handshake response to produce the activation info blob.
  * On success, *activation_info is set to a new plist. Caller frees.
  * Returns 0 on success, -1 on error.
  */
