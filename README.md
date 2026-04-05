@@ -251,6 +251,79 @@ This tool is for **authorized security research only** (Apple Security Bounty pr
 
 ---
 
+## References
+
+This project was built on extensive research and analysis of open-source tools, security disclosures, Apple documentation, and community knowledge.
+
+### Open-Source Tools and Libraries
+
+| Project | What we used it for |
+|---------|-------------------|
+| [gaster](https://github.com/0x7ff/gaster) | checkm8 exploit implementation in C -- chip offsets, ROP chains, exploit stages, shellcode structure |
+| [ipwndfu](https://github.com/axi0mX/ipwndfu) | Original checkm8 exploit reference (Python) -- payload structure, heap spray parameters |
+| [libimobiledevice](https://github.com/libimobiledevice/libimobiledevice) | Device communication, lockdownd, mobileactivation API |
+| [libideviceactivation](https://github.com/libimobiledevice/libideviceactivation) | Activation record handling, drmHandshake protocol |
+| [go-ios](https://github.com/danielpaulus/go-ios) | mobileactivation module -- session protocol, handshake sequence, activation flow |
+| [pymobiledevice3](https://github.com/doronz88/pymobiledevice3) | Python reference for activation protocol and mobile services |
+| [checkra1n / PongoOS](https://github.com/checkra1n/PongoOS) | Pre-boot execution environment, jailbreak reference for A5-A11 |
+| [palera1n](https://github.com/palera1n/palera1n) | Modern checkm8-based jailbreak, ramdisk builder |
+| [jbinit](https://github.com/tihmstar/jbinit) | iOS booter ramdisk creator for checkm8 devices |
+| [Lockra1n](https://github.com/alwaysappleftd/Lockra1n_v2.0) | Untethered iCloud bypass reference (iOS 15-16.7.8) |
+| [LIBRE-HACKTIVATOR](https://github.com/i3T4AN/LIBRE-HACKTIVATOR_iOS_12-16) | Deletescript reference -- per-iOS-version cleanup scripts |
+| [iOS-Hacktivation-Toolkit](https://github.com/Hacktivation/iOS-Hacktivation-Toolkit) | Per-version mobileactivationd patching scripts |
+| [Onii_Ramdisk](https://github.com/LinhOnii/Onii_Ramdisk) | Free iCloud bypass ramdisk tool |
+| [img4tool](https://github.com/Tihmstar/img4tool) | IMG4 firmware container extraction |
+| [iBoot64Patcher](https://github.com/Tihmstar/iBoot64Patcher) | Bootloader patching for ramdisk loading |
+| [ramdiskutil](https://github.com/cfw-project/ramdiskutil) | iOS restore ramdisk customization |
+| [iExtractor](https://github.com/malus-security/iextractor) | Automated IPSW firmware extraction |
+
+### Security Research and Disclosures
+
+| Source | Relevance |
+|--------|-----------|
+| [VU#346053 -- iOS Activation Flaw](https://github.com/JGoyd/iOS-Activation-Flaw) | Unpatched XML injection at humb.apple.com/humbug/baa (iOS 26.3+ bypass vector) |
+| [Full Disclosure: iOS Activation Flaw](https://seclists.org/fulldisclosure/2025/Jun/27) | Original public disclosure of VU#346053 (June 2025) |
+| [CVE-2019-8900 -- checkm8](https://theapplewiki.com/wiki/Checkm8_Exploit) | BootROM use-after-free vulnerability (A5-A11) |
+| [CVE-2023-41991 -- CoreTrust](https://theapplewiki.com/wiki/CoreTrust) | Code signing bypass (patched iOS 17.0.1), explains why persistent signing fails on iOS 18+ |
+| [CVE-2026-20687 -- Kernel UAF](https://support.apple.com/en-us/100100) | IOCommandGate use-after-free via AppleKeyStore race condition (iOS 26.1-26.3) |
+| [CVE-2026-28859 -- WebKit Sandbox Escape](https://support.apple.com/en-us/100100) | Memory handling bug allowing process to escape sandbox (patched iOS 26.4) |
+
+### Apple Documentation
+
+| Source | What it covers |
+|--------|---------------|
+| [Apple Activation Lock](https://support.apple.com/en-us/108794) | Official activation lock documentation |
+| [Apple Security Bounty](https://security.apple.com/bounty/) | Bug bounty program this research falls under |
+| [Secure Enclave](https://support.apple.com/guide/security/sec59b0b31ff) | SEP architecture and activation state storage |
+| [The Apple Wiki -- Firmware Keys](https://theapplewiki.com/wiki/Firmware_Keys) | Decryption keys for IPSW ramdisk extraction |
+| [The iPhone Wiki -- Activation Token](https://www.theiphonewiki.com/wiki/Activation_Token) | Activation record plist format and fields |
+| [The iPhone Wiki -- WildcardTicket](https://www.theiphonewiki.com/wiki/WildcardTicket) | Activation ticket structure (TEA-CBC encryption) |
+| [The iPhone Wiki -- Setup.app](https://www.theiphonewiki.com/wiki//Applications/Setup.app) | Setup Assistant paths targeted by deletescript |
+| [Albert Server](https://theapplewiki.com/wiki/Albert) | Apple's activation server endpoints |
+
+### Analysis and Articles
+
+| Source | Topic |
+|--------|-------|
+| [GBHackers -- iOS Activation Flaw](https://gbhackers.com/apple-ios-activation-flaw-enables-injection/) | VU#346053 technical analysis |
+| [CyberSecurity News -- Activation Vulnerability](https://cybersecuritynews.com/apples-ios-activation-vulnerability/) | VU#346053 impact analysis |
+| [checkm8 Deep Dive (Medium)](https://medium.com/@saadanashraf86/the-unpatchable-flaw-a-deep-dive-into-apples-dfu-mode-and-the-checkm8-exploit-0d3dae2a2075) | checkm8 exploit mechanics |
+| [Zimperium -- checkm8 Analysis](https://zimperium.com/blog/zimperium-analysis-of-checkm8) | Security industry analysis of checkm8 |
+| [Habr -- checkm8 Technical Analysis](https://habr.com/en/companies/dsec/articles/472762/) | Detailed technical breakdown of the DFU UAF |
+| [Black Hat 2016 -- Demystifying the SEP](https://blackhat.com/docs/us-16/materials/us-16-Mandt-Demystifying-The-Secure-Enclave-Processor.pdf) | Secure Enclave architecture research |
+| [Dynastic Research -- iOS Codesign Bypass](https://research.dynastic.co/2019/03/01/codesign-bypass) | CoreTrust/AMFI bypass history |
+
+### Commercial Tools Analyzed
+
+During development, the following proprietary tools were analyzed to understand bypass flows and protocol implementations:
+
+| Tool | Version | What we extracted |
+|------|---------|------------------|
+| Checkm8.info Software | 9.5 | Two-section architecture (A5-A11 vs A12+), DFU exploit flow, FActivation protocol, offline bypass method, bundled go-ios binary, ipwndfu payloads |
+| iRemoveTools | 9.5 | A12+ activation APIs, signal vs no-signal handling, MobileDeviceFramework usage, mobileactivationd interaction |
+
+---
+
 ## License
 
 MIT
