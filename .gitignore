@@ -37,6 +37,9 @@ secrets.*
 notes/
 tasks/
 
+# Bug bounty reports (sensitive, not for public repo)
+bounty/
+
 # Python (if any helper scripts)
 __pycache__/
 *.pyc
