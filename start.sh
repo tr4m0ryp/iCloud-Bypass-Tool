@@ -389,39 +389,50 @@ guide_dfu_faceid() {
     echo ""
 }
 
-handle_dfu_requirement() {
-    # For checkm8 path, device MUST be in DFU mode
-    if [ "$DEV_CHECKM8" = "YES" ] && [ "$DEVICE_MODE" != "dfu" ]; then
-        msg_warn "checkm8 bypass requires DFU mode, but device is in normal mode."
-        echo ""
+wait_for_dfu_entry() {
+    local reason="$1"
+    msg_warn "$reason"
+    echo ""
 
-        if is_faceid_device "${DEV_MODEL:-}"; then
-            guide_dfu_faceid
-        else
-            guide_dfu_home_button
+    if is_faceid_device "${DEV_MODEL:-}"; then
+        guide_dfu_faceid
+    else
+        guide_dfu_home_button
+    fi
+
+    msg_info "Waiting for DFU mode..."
+
+    local timeout=120
+    local elapsed=0
+    local interval=2
+
+    while [ $elapsed -lt $timeout ]; do
+        if check_dfu; then
+            DEVICE_MODE="dfu"
+            msg_ok "Device detected in DFU mode!"
+            return 0
         fi
+        printf "\r${CYAN}[*]${RESET} Waiting for DFU... %ds / %ds" "$elapsed" "$timeout"
+        sleep "$interval"
+        elapsed=$((elapsed + interval))
+    done
 
-        msg_info "Waiting for DFU mode..."
+    echo ""
+    msg_err "DFU mode not detected within ${timeout}s."
+    msg_info "Please retry DFU entry and run this script again."
+    exit 1
+}
 
-        local timeout=120
-        local elapsed=0
-        local interval=2
+handle_dfu_requirement() {
+    # Both bypass paths require DFU mode
+    if [ "$DEVICE_MODE" = "dfu" ]; then
+        return 0
+    fi
 
-        while [ $elapsed -lt $timeout ]; do
-            if check_dfu; then
-                DEVICE_MODE="dfu"
-                msg_ok "Device detected in DFU mode!"
-                return 0
-            fi
-            printf "\r${CYAN}[*]${RESET} Waiting for DFU... %ds / %ds" "$elapsed" "$timeout"
-            sleep "$interval"
-            elapsed=$((elapsed + interval))
-        done
-
-        echo ""
-        msg_err "DFU mode not detected within ${timeout}s."
-        msg_info "Please retry DFU entry and run this script again."
-        exit 1
+    if [ "$DEV_CHECKM8" = "YES" ]; then
+        wait_for_dfu_entry "Path A (checkm8) requires DFU mode, but device is in normal mode."
+    elif [ "$DEV_STATUS" = "SUPPORTED" ]; then
+        wait_for_dfu_entry "Path B (A12+ bypass) requires DFU mode, but device is in normal mode."
     fi
 }
 

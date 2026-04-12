@@ -162,6 +162,30 @@ static void register_modules(void)
     log_debug("Registered %d bypass module(s)", bypass_count());
 }
 
+static void print_module_diagnostics(const device_info_t *dev)
+{
+    log_error("No compatible bypass module for this device");
+    log_error("--- Diagnostic info ---");
+    log_error("  DFU mode:   %s", dev->is_dfu_mode ? "YES" : "NO");
+    log_error("  CPID:       0x%04X", dev->cpid);
+    log_error("  Chip:       %s", dev->chip_name[0] ? dev->chip_name : "(unknown)");
+    log_error("  checkm8:    %s", dev->checkm8_vulnerable ? "vulnerable" : "not vulnerable");
+    log_error("  Product:    %s", dev->product_type[0] ? dev->product_type : "(unknown)");
+
+    if (!dev->is_dfu_mode) {
+        log_error("Both bypass paths require DFU mode.");
+        log_error("Run ./start.sh for guided DFU entry, or enter DFU manually.");
+    } else if (dev->cpid == 0) {
+        log_error("CPID is 0x0000 -- device chip not identified.");
+        log_error("Ensure device is properly in DFU mode (screen must be BLACK).");
+    } else if (dev->chip_name[0] == '\0' ||
+               strcmp(dev->chip_name, "Unknown") == 0) {
+        log_error("Chip CPID 0x%04X not found in database.", dev->cpid);
+    }
+
+    log_error("-----------------------");
+}
+
 static const bypass_module_t *select_module(device_info_t *dev,
                                             const cli_opts_t *opts)
 {
@@ -176,7 +200,7 @@ static const bypass_module_t *select_module(device_info_t *dev,
 
     const bypass_module_t *mod = bypass_select(dev);
     if (!mod) {
-        log_error("No compatible bypass module for this device");
+        print_module_diagnostics(dev);
         return NULL;
     }
 
