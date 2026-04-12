@@ -213,16 +213,31 @@ install_deps() {
 # ------------------------------------------------------------------ #
 
 build_project() {
-    if [ -x "$BINARY" ]; then
+    if [ -f "$BINARY" ] && [ -x "$BINARY" ]; then
         msg_ok "Binary already built: $BINARY"
         return 0
     fi
 
+    # If a directory exists where the binary should be, the build cannot proceed
+    if [ -d "$BINARY" ]; then
+        msg_err "Expected binary at $BINARY but found a directory."
+        msg_info "Remove it and rebuild: rm -rf '$BINARY' && make clean && make"
+        exit 1
+    fi
+
     msg_info "Building tr4mpass..."
-    (cd "$SCRIPT_DIR" && make clean && make)
+    if ! (cd "$SCRIPT_DIR" && make clean && make); then
+        msg_err "Build failed. Check compiler output above."
+        exit 1
+    fi
+
+    if [ ! -f "$BINARY" ]; then
+        msg_err "Build completed but binary not found at $BINARY."
+        exit 1
+    fi
 
     if [ ! -x "$BINARY" ]; then
-        msg_err "Build failed. Check compiler output above."
+        msg_err "Binary exists but is not executable. Run: chmod +x $BINARY"
         exit 1
     fi
 
@@ -511,6 +526,22 @@ main() {
     echo ""
     msg_info "Starting tr4mpass..."
     echo ""
+
+    # Final validation before exec
+    if [ ! -e "$BINARY" ]; then
+        msg_err "Binary not found at $BINARY. Build may have failed."
+        msg_info "Run 'make' manually to see errors."
+        exit 1
+    fi
+    if [ -d "$BINARY" ]; then
+        msg_err "Expected binary at $BINARY but found a directory."
+        msg_info "Remove it and rebuild: rm -rf '$BINARY' && make clean && make"
+        exit 1
+    fi
+    if [ ! -x "$BINARY" ]; then
+        msg_err "Binary exists but is not executable. Run: chmod +x $BINARY"
+        exit 1
+    fi
 
     exec "$BINARY" "$@"
 }
