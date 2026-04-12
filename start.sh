@@ -139,7 +139,7 @@ install_deps_macos() {
 }
 
 install_deps_linux_apt() {
-    local apt_pkgs="libimobiledevice-dev libirecovery-dev libusb-1.0-0-dev libplist-dev libssl-dev pkg-config build-essential"
+    local apt_pkgs="libimobiledevice-dev libirecovery-1.0-dev libusb-1.0-0-dev libplist-dev libssl-dev pkg-config build-essential"
     msg_info "Installing dependencies via apt..."
     sudo apt-get update -qq
     sudo apt-get install -y $apt_pkgs
