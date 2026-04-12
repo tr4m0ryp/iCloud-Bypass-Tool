@@ -13,6 +13,7 @@
 
 #include "bypass/path_b.h"
 #include "device/usb_dfu.h"
+#include "util/usb_helpers.h"
 #include "util/log.h"
 
 /* USB descriptor request types */
@@ -44,7 +45,7 @@ static int usb_get_string_descriptor(libusb_device_handle *usb,
         return -1;
     }
 
-    rc = libusb_control_transfer(
+    rc = usb_ctrl_transfer(
         usb,
         0x80,                                       /* bmRequestType  */
         USB_REQ_GET_DESCRIPTOR,                     /* bRequest       */
@@ -58,6 +59,7 @@ static int usb_get_string_descriptor(libusb_device_handle *usb,
     if (rc < 0) {
         log_error("[path_b_id] GET_DESCRIPTOR failed: %s",
                   libusb_error_name(rc));
+        usb_print_error(rc);
         return -1;
     }
 
@@ -194,7 +196,7 @@ int path_b_write_serial(device_info_t *dev, const char *new_serial)
     }
 
     /* SET_DESCRIPTOR: host-to-device, standard, device recipient */
-    rc = libusb_control_transfer(
+    rc = usb_ctrl_transfer(
         dev->usb,
         0x00,                                               /* bmRequestType  */
         USB_REQ_SET_DESCRIPTOR,                             /* bRequest       */
@@ -208,7 +210,7 @@ int path_b_write_serial(device_info_t *dev, const char *new_serial)
     if (rc < 0) {
         log_warn("[path_b_id] SET_DESCRIPTOR returned: %s",
                  libusb_error_name(rc));
-        /* TODO: fallback vendor-specific transfer for A12+ DFU firmware */
+        usb_print_error(rc);
         return -1;
     }
 

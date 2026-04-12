@@ -482,13 +482,24 @@ main() {
         display_device_info
         gate_support
     else
-        # DFU mode -- limited info, but checkm8 path is implied
+        # DFU mode -- query CPID from serial descriptor to determine path
+        msg_info "Device in DFU mode. Querying chip info..."
+        parse_device_info
+
+        local dfu_bypass="auto-detect"
+        if [ "$DEV_CHECKM8" = "YES" ]; then
+            dfu_bypass="Path A (checkm8, A5-A11)"
+        elif [ -n "$DEV_CPID" ] && [ "$DEV_CPID" != "0x0000" ]; then
+            dfu_bypass="Path B (identity, A12+)"
+        fi
+
         echo ""
         echo "========================================"
         echo "  Device Information"
         echo "========================================"
         printf "  %-12s %s\n" "Mode:" "DFU"
-        printf "  %-12s %s\n" "Bypass:" "Path A (checkm8)"
+        printf "  %-12s %s\n" "Chip:" "${DEV_CHIP_NAME:-(unknown)} (CPID: ${DEV_CPID:-(unknown)})"
+        printf "  %-12s %s\n" "Bypass:" "$dfu_bypass"
         printf "  %-12s %s\n" "Status:" "SUPPORTED (DFU detected)"
         echo "========================================"
         echo ""

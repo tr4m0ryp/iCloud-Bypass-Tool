@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
+#include <unistd.h>
 
 #include "device/usb_dfu.h"
 #include "util/usb_helpers.h"
@@ -24,31 +25,21 @@
 /* Module-global libusb context */
 static libusb_context *g_ctx = NULL;
 
-/* ------------------------------------------------------------------ */
-/* Lifecycle                                                           */
-/* ------------------------------------------------------------------ */
-
 int usb_dfu_init(void)
 {
     int ret;
-
-    if (g_ctx) {
-        log_warn("usb_dfu_init: libusb context already initialized");
+    if (g_ctx)
         return 0;
-    }
-
     ret = libusb_init(&g_ctx);
     if (ret != LIBUSB_SUCCESS) {
         log_error("libusb_init failed: %s", libusb_strerror(ret));
         return -1;
     }
-
 #if LIBUSB_API_VERSION >= 0x01000106
     libusb_set_option(g_ctx, LIBUSB_OPTION_LOG_LEVEL, LIBUSB_LOG_LEVEL_WARNING);
 #else
     libusb_set_debug(g_ctx, LIBUSB_LOG_LEVEL_WARNING);
 #endif
-
     log_debug("libusb context initialized");
     return 0;
 }
@@ -58,13 +49,8 @@ void usb_dfu_cleanup(void)
     if (g_ctx) {
         libusb_exit(g_ctx);
         g_ctx = NULL;
-        log_debug("libusb context cleaned up");
     }
 }
-
-/* ------------------------------------------------------------------ */
-/* Device discovery                                                    */
-/* ------------------------------------------------------------------ */
 
 int usb_dfu_find(libusb_device_handle **handle)
 {
@@ -128,15 +114,7 @@ int usb_dfu_find(libusb_device_handle **handle)
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/* Serial string parsing                                               */
-/* ------------------------------------------------------------------ */
-
-/*
- * Parse a hex value following a key prefix in the serial string.
- * Example: parse_hex_field("CPID:8015 ECID:...", "CPID:", &val)
- * Returns 0 on success, -1 if the key is not found.
- */
+/* Parse hex value after key prefix (e.g. "CPID:" -> 0x8015). */
 static int parse_hex_field(const char *serial, const char *key, uint64_t *out)
 {
     const char *p;
@@ -171,12 +149,28 @@ int usb_dfu_read_info(libusb_device_handle *handle, uint32_t *cpid,
     if (ecid) *ecid = 0;
     if (serial && serial_len > 0) serial[0] = '\0';
 
-    /* Read the serial string descriptor (index 3 for Apple DFU) */
-    ret = libusb_get_string_descriptor_ascii(handle, DFU_SERIAL_INDEX,
-                                             buf, sizeof(buf));
+    /* Read the serial string descriptor (index 3 for Apple DFU).
+     * Retry on transient PIPE/TIMEOUT errors -- common on A12+ DFU. */
+    {
+        int attempt;
+        for (attempt = 0; attempt < 3; attempt++) {
+            ret = libusb_get_string_descriptor_ascii(handle, DFU_SERIAL_INDEX,
+                                                     buf, sizeof(buf));
+            if (ret >= 0)
+                break;
+            if (ret != LIBUSB_ERROR_PIPE && ret != LIBUSB_ERROR_TIMEOUT)
+                break;
+            if (attempt < 2) {
+                log_warn("serial descriptor read: %s (attempt %d/3, retrying)",
+                         libusb_strerror(ret), attempt + 1);
+                usleep(50000);
+            }
+        }
+    }
     if (ret < 0) {
         log_error("failed to read serial descriptor: %s",
                   libusb_strerror(ret));
+        usb_print_error(ret);
         return -1;
     }
 
@@ -213,10 +207,6 @@ int usb_dfu_read_info(libusb_device_handle *handle, uint32_t *cpid,
 
     return 0;
 }
-
-/* ------------------------------------------------------------------ */
-/* Data transfer                                                       */
-/* ------------------------------------------------------------------ */
 
 int usb_dfu_send(libusb_device_handle *handle, const void *data, size_t len)
 {
@@ -267,10 +257,6 @@ int usb_dfu_recv(libusb_device_handle *handle, void *buf, size_t len,
     else
         xfer_len = (uint16_t)len;
 
-    /*
-     * DFU UPLOAD: bmRequestType = device-to-host, class, interface
-     * bRequest = DFU_UPLOAD (2), wValue = block number, wIndex = 0
-     */
     ret = usb_ctrl_transfer(handle, DFU_REQUEST_IN, DFU_UPLOAD,
                             0, 0, (unsigned char *)buf,
                             xfer_len, DFU_USB_TIMEOUT);
@@ -284,10 +270,6 @@ int usb_dfu_recv(libusb_device_handle *handle, void *buf, size_t len,
     log_debug("DFU UPLOAD: received %zu bytes", *actual);
     return 0;
 }
-
-/* ------------------------------------------------------------------ */
-/* Cleanup                                                             */
-/* ------------------------------------------------------------------ */
 
 void usb_dfu_close(libusb_device_handle *handle)
 {
