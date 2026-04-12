@@ -13,10 +13,11 @@
 #include "util/log.h"
 
 /*
- * afc_strerror -- Convert an afc_error_t code to a human-readable string.
- * libimobiledevice does not provide this function, so we define it locally.
+ * afc_err_str -- Convert an afc_error_t code to a human-readable string.
+ * Named differently from afc_err_str() to avoid conflict with
+ * libimobiledevice >= 1.4.0 which exports that symbol.
  */
-static const char *afc_strerror(afc_error_t err)
+static const char *afc_err_str(afc_error_t err)
 {
     switch (err) {
     case AFC_E_SUCCESS:              return "success";
@@ -74,7 +75,7 @@ int afc_connect_service(device_info_t *dev, afc_client_t *client,
     lockdownd_service_descriptor_free(svc);
 
     if (aerr != AFC_E_SUCCESS) {
-        log_error("[afc] afc_client_new failed: %s", afc_strerror(aerr));
+        log_error("[afc] afc_client_new failed: %s", afc_err_str(aerr));
         return -1;
     }
 
@@ -108,7 +109,7 @@ int afc_write_file(afc_client_t client, const char *path,
     err = afc_file_open(client, path, AFC_FOPEN_WR, &handle);
     if (err != AFC_E_SUCCESS) {
         log_error("[afc] Cannot open '%s' for writing: %s",
-                  path, afc_strerror(err));
+                  path, afc_err_str(err));
         return -1;
     }
 
@@ -116,7 +117,7 @@ int afc_write_file(afc_client_t client, const char *path,
     afc_file_close(client, handle);
 
     if (err != AFC_E_SUCCESS) {
-        log_error("[afc] Write to '%s' failed: %s", path, afc_strerror(err));
+        log_error("[afc] Write to '%s' failed: %s", path, afc_err_str(err));
         return -1;
     }
 
@@ -138,7 +139,7 @@ int afc_read_file(afc_client_t client, const char *path,
     err = afc_file_open(client, path, AFC_FOPEN_RDONLY, &handle);
     if (err != AFC_E_SUCCESS) {
         log_error("[afc] Cannot open '%s' for reading: %s",
-                  path, afc_strerror(err));
+                  path, afc_err_str(err));
         return -1;
     }
 
@@ -172,7 +173,7 @@ int afc_list_dir(afc_client_t client, const char *path)
 
     err = afc_read_directory(client, path, &entries);
     if (err != AFC_E_SUCCESS) {
-        log_error("[afc] Cannot list '%s': %s", path, afc_strerror(err));
+        log_error("[afc] Cannot list '%s': %s", path, afc_err_str(err));
         return -1;
     }
 
@@ -220,7 +221,7 @@ int afc_remove_file(afc_client_t client, const char *path)
 
     err = afc_remove_path(client, path);
     if (err != AFC_E_SUCCESS) {
-        log_error("[afc] Cannot remove '%s': %s", path, afc_strerror(err));
+        log_error("[afc] Cannot remove '%s': %s", path, afc_err_str(err));
         return -1;
     }
 
