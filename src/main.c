@@ -1,13 +1,8 @@
-/*
- * main.c -- tr4mpass entry point and orchestration.
- *
- * CLI argument parsing, device detection (DFU via libusb first, then
- * libimobiledevice), chip database lookup, module registration, and
- * bypass execution.  Orchestration only -- no business logic.
- */
+/* main.c -- tr4mpass entry point and orchestration. */
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <getopt.h>
 
@@ -26,37 +21,47 @@ typedef struct {
     int detect_only;
     int force_path_a;
     int force_path_b;
+    uint32_t cpid_override;
+    uint64_t ecid_override;
+    int has_cpid_override;
+    int has_ecid_override;
 } cli_opts_t;
 
 static void print_banner(void)
 {
-    printf("========================================\n");
-    printf("  tr4mpass v%s\n", TR4MPASS_VERSION);
-    printf("  Activation lock bypass research tool\n");
-    printf("========================================\n\n");
+    printf("========================================\n"
+           "  tr4mpass v%s\n"
+           "  Activation lock bypass research tool\n"
+           "========================================\n\n", TR4MPASS_VERSION);
 }
 
 static void print_usage(const char *prog)
 {
-    printf("Usage: %s [OPTIONS]\n\n", prog);
-    printf("Options:\n");
-    printf("  -v, --verbose       Enable debug logging\n");
-    printf("  -n, --dry-run       Show what would run, do not execute\n");
-    printf("  -d, --detect-only   Detect device and exit\n");
-    printf("  -a, --force-path-a  Force Path A (checkm8, A5-A11)\n");
-    printf("  -b, --force-path-b  Force Path B (identity, A12+)\n");
-    printf("  -h, --help          Show this help message\n");
+    printf("Usage: %s [OPTIONS]\n\n"
+           "Options:\n"
+           "  -v, --verbose       Enable debug logging\n"
+           "  -n, --dry-run       Show what would run, do not execute\n"
+           "  -d, --detect-only   Detect device and exit\n"
+           "  -a, --force-path-a  Force Path A (checkm8, A5-A11)\n"
+           "  -b, --force-path-b  Force Path B (identity, A12+)\n"
+           "      --cpid <hex>    Override CPID (e.g. --cpid 0x8960)\n"
+           "      --ecid <hex>    Override ECID (e.g. --ecid 0x1F70CB1331C)\n"
+           "  -h, --help          Show this help message\n", prog);
 }
 
 static int parse_args(int argc, char *argv[], cli_opts_t *opts)
 {
+    enum { OPT_CPID = 256, OPT_ECID = 257 };
+
     static const struct option longopts[] = {
-        { "verbose",      no_argument, NULL, 'v' },
-        { "dry-run",      no_argument, NULL, 'n' },
-        { "detect-only",  no_argument, NULL, 'd' },
-        { "force-path-a", no_argument, NULL, 'a' },
-        { "force-path-b", no_argument, NULL, 'b' },
-        { "help",         no_argument, NULL, 'h' },
+        { "verbose",      no_argument,       NULL, 'v' },
+        { "dry-run",      no_argument,       NULL, 'n' },
+        { "detect-only",  no_argument,       NULL, 'd' },
+        { "force-path-a", no_argument,       NULL, 'a' },
+        { "force-path-b", no_argument,       NULL, 'b' },
+        { "cpid",         required_argument, NULL, OPT_CPID },
+        { "ecid",         required_argument, NULL, OPT_ECID },
+        { "help",         no_argument,       NULL, 'h' },
         { NULL, 0, NULL, 0 }
     };
 
@@ -70,6 +75,14 @@ static int parse_args(int argc, char *argv[], cli_opts_t *opts)
         case 'd': opts->detect_only  = 1; break;
         case 'a': opts->force_path_a = 1; break;
         case 'b': opts->force_path_b = 1; break;
+        case OPT_CPID:
+            opts->cpid_override     = (uint32_t)strtoul(optarg, NULL, 16);
+            opts->has_cpid_override = 1;
+            break;
+        case OPT_ECID:
+            opts->ecid_override     = (uint64_t)strtoull(optarg, NULL, 16);
+            opts->has_ecid_override = 1;
+            break;
         case 'h': print_usage(argv[0]); return 1;
         default:  print_usage(argv[0]); return -1;
         }
@@ -83,49 +96,34 @@ static int parse_args(int argc, char *argv[], cli_opts_t *opts)
     return 0;
 }
 
-/* Device detection: DFU first, then libimobiledevice */
 static int detect_device(device_info_t *dev)
 {
     libusb_device_handle *usb_handle = NULL;
-
     memset(dev, 0, sizeof(*dev));
 
-    /* Try DFU mode first */
     if (usb_dfu_find(&usb_handle) == 0) {
         log_info("Device found in DFU mode");
-
         uint32_t cpid = 0;
         uint64_t ecid = 0;
         char serial[DFU_SERIAL_MAX] = {0};
-
         if (usb_dfu_read_info(usb_handle, &cpid, &ecid,
-                              serial, sizeof(serial)) < 0) {
+                              serial, sizeof(serial)) < 0)
             log_warn("Failed to read DFU serial info");
-        }
-
         dev->cpid        = cpid;
         dev->ecid        = ecid;
         dev->is_dfu_mode = 1;
         dev->usb         = usb_handle;
-
-        /* Copy serial into device serial field */
         snprintf(dev->serial, sizeof(dev->serial), "%s", serial);
-
         return 0;
     }
 
-    /* Fallback: normal mode via libimobiledevice */
     log_info("No DFU device found, trying normal mode...");
-
     if (device_detect(dev) < 0) {
         log_error("No device detected. Is it connected via USB?");
         return -1;
     }
-
-    if (device_query_info(dev) < 0) {
+    if (device_query_info(dev) < 0)
         log_warn("Incomplete device info (partial data may be available)");
-    }
-
     return 0;
 }
 
@@ -135,7 +133,6 @@ static void enrich_chip_info(device_info_t *dev)
         log_warn("CPID not available, chip lookup skipped");
         return;
     }
-
     const chip_info_t *chip = chip_db_lookup(dev->cpid);
     if (!chip) {
         log_warn("CPID 0x%04X not found in chip database", dev->cpid);
@@ -143,10 +140,8 @@ static void enrich_chip_info(device_info_t *dev)
         dev->checkm8_vulnerable = 0;
         return;
     }
-
     snprintf(dev->chip_name, sizeof(dev->chip_name), "%s", chip->name);
     dev->checkm8_vulnerable = chip->checkm8_vulnerable;
-
     log_debug("Chip: %s (CPID 0x%04X) -- checkm8 %s",
               chip->name, chip->cpid,
               chip->checkm8_vulnerable ? "vulnerable" : "not vulnerable");
@@ -158,52 +153,33 @@ static void register_modules(void)
         log_warn("Failed to register Path A module");
     if (bypass_register(&path_b_module) < 0)
         log_warn("Failed to register Path B module");
-
     log_debug("Registered %d bypass module(s)", bypass_count());
 }
 
 static void print_module_diagnostics(const device_info_t *dev)
 {
     log_error("No compatible bypass module for this device");
-    log_error("--- Diagnostic info ---");
-    log_error("  DFU mode:   %s", dev->is_dfu_mode ? "YES" : "NO");
-    log_error("  CPID:       0x%04X", dev->cpid);
-    log_error("  Chip:       %s", dev->chip_name[0] ? dev->chip_name : "(unknown)");
-    log_error("  checkm8:    %s", dev->checkm8_vulnerable ? "vulnerable" : "not vulnerable");
-    log_error("  Product:    %s", dev->product_type[0] ? dev->product_type : "(unknown)");
+    log_error("  DFU=%s CPID=0x%04X Chip=%s checkm8=%s Product=%s",
+              dev->is_dfu_mode ? "YES" : "NO", dev->cpid,
+              dev->chip_name[0] ? dev->chip_name : "(unknown)",
+              dev->checkm8_vulnerable ? "YES" : "NO",
+              dev->product_type[0] ? dev->product_type : "(unknown)");
 
-    if (!dev->is_dfu_mode) {
-        log_error("Both bypass paths require DFU mode.");
-        log_error("Run ./start.sh for guided DFU entry, or enter DFU manually.");
-    } else if (dev->cpid == 0) {
-        log_error("CPID is 0x0000 -- device chip not identified.");
-        log_error("Ensure device is properly in DFU mode (screen must be BLACK).");
-    } else if (dev->chip_name[0] == '\0' ||
-               strcmp(dev->chip_name, "Unknown") == 0) {
-        log_error("Chip CPID 0x%04X not found in database.", dev->cpid);
-    }
-
-    log_error("-----------------------");
+    if (!dev->is_dfu_mode)
+        log_error("Both paths require DFU mode. Use ./start.sh or enter DFU manually.");
+    else if (dev->cpid == 0)
+        log_error("CPID is 0x0000 -- try --cpid to set manually.");
+    else if (dev->chip_name[0] == '\0' || strcmp(dev->chip_name, "Unknown") == 0)
+        log_error("Chip CPID 0x%04X not in database.", dev->cpid);
 }
 
 static const bypass_module_t *select_module(device_info_t *dev,
                                             const cli_opts_t *opts)
 {
-    if (opts->force_path_a) {
-        log_info("Path A forced by user");
-        return &path_a_module;
-    }
-    if (opts->force_path_b) {
-        log_info("Path B forced by user");
-        return &path_b_module;
-    }
-
+    if (opts->force_path_a) { log_info("Path A forced"); return &path_a_module; }
+    if (opts->force_path_b) { log_info("Path B forced"); return &path_b_module; }
     const bypass_module_t *mod = bypass_select(dev);
-    if (!mod) {
-        print_module_diagnostics(dev);
-        return NULL;
-    }
-
+    if (!mod) { print_module_diagnostics(dev); return NULL; }
     log_info("Auto-selected module: %s", mod->name);
     return mod;
 }
@@ -226,51 +202,57 @@ int main(int argc, char *argv[])
 
     print_banner();
 
-    /* Parse CLI arguments */
     ret = parse_args(argc, argv, &opts);
     if (ret != 0)
-        return (ret > 0) ? 0 : 1;  /* help = 0, error = 1 */
-
+        return (ret > 0) ? 0 : 1;
     if (opts.verbose)
         log_set_level(LOG_DEBUG);
 
-    /* Initialize libusb */
     if (usb_dfu_init() < 0) {
         log_error("Failed to initialize USB subsystem");
         return 1;
     }
-
-    /* Detect device */
     if (detect_device(&dev) < 0) {
         usb_dfu_cleanup();
         return 1;
     }
 
-    /* Enrich with chip database */
-    enrich_chip_info(&dev);
+    /* Apply CLI overrides for CPID/ECID */
+    if (opts.has_cpid_override) {
+        if (dev.cpid == 0) {
+            dev.cpid = opts.cpid_override;
+            log_info("CPID overridden: 0x%04X (from --cpid)", dev.cpid);
+        } else {
+            log_info("CPID already detected (0x%04X), ignoring --cpid override",
+                     dev.cpid);
+        }
+    }
+    if (opts.has_ecid_override) {
+        if (dev.ecid == 0) {
+            dev.ecid = opts.ecid_override;
+            log_info("ECID overridden: 0x%llX (from --ecid)",
+                     (unsigned long long)dev.ecid);
+        } else {
+            log_info("ECID already detected (0x%llX), ignoring --ecid override",
+                     (unsigned long long)dev.ecid);
+        }
+    }
 
-    /* Print device info */
+    enrich_chip_info(&dev);
     device_print_info(&dev);
 
-    /* Early exit for detect-only mode */
     if (opts.detect_only) {
         log_info("Detect-only mode, exiting");
         cleanup(&dev);
         return 0;
     }
 
-    /* Register bypass modules */
     register_modules();
     bypass_list();
 
-    /* Select module */
     const bypass_module_t *mod = select_module(&dev, &opts);
-    if (!mod) {
-        cleanup(&dev);
-        return 1;
-    }
+    if (!mod) { cleanup(&dev); return 1; }
 
-    /* Dry-run: show what would execute */
     if (opts.dry_run) {
         printf("[dry-run] Would execute: %s\n", mod->name);
         printf("[dry-run] Description:   %s\n", mod->description);
@@ -278,17 +260,13 @@ int main(int argc, char *argv[])
         return 0;
     }
 
-    /* Execute bypass */
     log_info("Executing module: %s", mod->name);
     ret = bypass_execute(mod, &dev);
-
-    if (ret == 0) {
+    if (ret == 0)
         printf("\n[+] Bypass completed successfully.\n");
-    } else {
+    else
         printf("\n[-] Bypass failed (error %d).\n", ret);
-    }
 
-    /* Cleanup */
     cleanup(&dev);
     return (ret == 0) ? 0 : 1;
 }
