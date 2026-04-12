@@ -7,9 +7,49 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <libimobiledevice/afc.h>
 #include <libimobiledevice/lockdown.h>
 #include "bypass/afc_utils.h"
 #include "util/log.h"
+
+/*
+ * afc_strerror -- Convert an afc_error_t code to a human-readable string.
+ * libimobiledevice does not provide this function, so we define it locally.
+ */
+static const char *afc_strerror(afc_error_t err)
+{
+    switch (err) {
+    case AFC_E_SUCCESS:              return "success";
+    case AFC_E_UNKNOWN_ERROR:        return "unknown error";
+    case AFC_E_OP_HEADER_INVALID:    return "operation header invalid";
+    case AFC_E_NO_RESOURCES:         return "no resources";
+    case AFC_E_READ_ERROR:           return "read error";
+    case AFC_E_WRITE_ERROR:          return "write error";
+    case AFC_E_UNKNOWN_PACKET_TYPE:  return "unknown packet type";
+    case AFC_E_INVALID_ARG:          return "invalid argument";
+    case AFC_E_OBJECT_NOT_FOUND:     return "object not found";
+    case AFC_E_OBJECT_IS_DIR:        return "object is a directory";
+    case AFC_E_PERM_DENIED:          return "permission denied";
+    case AFC_E_SERVICE_NOT_CONNECTED: return "service not connected";
+    case AFC_E_OP_TIMEOUT:           return "operation timeout";
+    case AFC_E_TOO_MUCH_DATA:        return "too much data";
+    case AFC_E_END_OF_DATA:          return "end of data";
+    case AFC_E_OP_NOT_SUPPORTED:     return "operation not supported";
+    case AFC_E_OBJECT_EXISTS:        return "object exists";
+    case AFC_E_OBJECT_BUSY:          return "object busy";
+    case AFC_E_NO_SPACE_LEFT:        return "no space left";
+    case AFC_E_OP_WOULD_BLOCK:       return "operation would block";
+    case AFC_E_IO_ERROR:             return "I/O error";
+    case AFC_E_OP_INTERRUPTED:       return "operation interrupted";
+    case AFC_E_OP_IN_PROGRESS:       return "operation in progress";
+    case AFC_E_INTERNAL_ERROR:       return "internal error";
+    case AFC_E_MUX_ERROR:            return "mux error";
+    case AFC_E_NO_MEM:               return "no memory";
+    case AFC_E_NOT_ENOUGH_DATA:      return "not enough data";
+    case AFC_E_DIR_NOT_EMPTY:        return "directory not empty";
+    default:                         return "unknown AFC error";
+    }
+}
 
 int afc_connect_service(device_info_t *dev, afc_client_t *client,
                         const char *service_name)
