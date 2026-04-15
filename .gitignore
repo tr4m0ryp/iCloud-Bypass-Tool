@@ -7,6 +7,7 @@
 *.exe
 *.lib
 itr4m
+tr4mpass
 
 # OS files
 .DS_Store
@@ -32,13 +33,10 @@ Thumbs.db
 *.jks
 credentials.*
 secrets.*
+.irecovery
 
 # Claude Code scaffolding
-notes/
-tasks/
-
-# Bug bounty reports (sensitive, not for public repo)
-bounty/
+.claude/
 
 # Python (if any helper scripts)
 __pycache__/
@@ -49,20 +47,3 @@ __pycache__/
 *.dSYM/
 core
 core.*
-
-# Captive portal runtime files
-captive_portal/certs/*.crt
-captive_portal/certs/*.key
-captive_portal/certs/*.csr
-captive_portal/certs/*.srl
-captive_portal/payloads/*.mobileconfig
-captive_portal/server/access.log
-captive_portal/server/requests/
-
-# Large extracted firmware files
-vulnhunt/extracted/ramdisk/*.dmg
-vulnhunt/extracted/binaries/restored_update
-vulnhunt/extracted/binaries/keystorectl
-vulnhunt/extracted/binaries/seputil
-vulnhunt/extracted/binaries/nvram
-vulnhunt/extracted/fdr_keys/
