@@ -16,6 +16,8 @@
 #include "activation/session.h"
 #include "activation/activation.h"
 #include "util/log.h"
+#include "util/env_config.h"
+#include "cli/cli_flags.h"
 
 typedef struct {
     int verbose;
@@ -43,7 +45,7 @@ static void print_usage(const char *prog)
 {
     printf("Usage: %s [OPTIONS]\n\n"
            "Options:\n"
-           "  -v, --verbose          Enable debug logging\n"
+           "  -v, --verbose          Enable debug logging + env summary\n"
            "  -n, --dry-run          Show what would run, do not execute\n"
            "  -d, --detect-only      Detect device and exit\n"
            "      --activate-only    Online activation via Albert (normal mode)\n"
@@ -52,7 +54,9 @@ static void print_usage(const char *prog)
            "  -b, --force-path-b     Force Path B (identity, A12+)\n"
            "      --cpid <hex>       Override CPID (e.g. --cpid 0x8960)\n"
            "      --ecid <hex>       Override ECID (e.g. --ecid 0x1F70CB1331C)\n"
-           "  -h, --help             Show this help message\n", prog);
+           "  -h, --help             Show this help message\n\n",
+           prog);
+    cli_flags_print_help();
 }
 
 static int parse_args(int argc, char *argv[], cli_opts_t *opts)
@@ -80,6 +84,14 @@ static int parse_args(int argc, char *argv[], cli_opts_t *opts)
 
     memset(opts, 0, sizeof(*opts));
 
+    /*
+     * Silence getopt's own errno print for unknown flags -- the
+     * bypass-pipeline long options (handled later by
+     * cli_parse_bypass_flags) show up here as '?' and should not
+     * abort the program.
+     */
+    opterr = 0;
+
     int c;
     while ((c = getopt_long(argc, argv, "vndabh", longopts, NULL)) != -1) {
         switch (c) {
@@ -101,6 +113,8 @@ static int parse_args(int argc, char *argv[], cli_opts_t *opts)
             opts->has_ecid_override = 1;
             break;
         case 'h': print_usage(argv[0]); return 1;
+        case '?': /* unknown flag -- defer to cli_parse_bypass_flags */
+            break;
         default:  print_usage(argv[0]); return -1;
         }
     }
@@ -219,11 +233,22 @@ int main(int argc, char *argv[])
 
     print_banner();
 
+    /*
+     * Apply bypass-pipeline CLI overrides first so argv is still
+     * pristine (main.c's getopt_long below will permute argv).
+     */
+    if (cli_parse_bypass_flags(argc, argv) != 0) {
+        log_error("Failed to parse bypass-pipeline CLI flags");
+        return 1;
+    }
+
     ret = parse_args(argc, argv, &opts);
     if (ret != 0)
         return (ret > 0) ? 0 : 1;
-    if (opts.verbose)
+    if (opts.verbose) {
         log_set_level(LOG_DEBUG);
+        env_print_tr4mpass_summary();
+    }
 
     if (usb_dfu_init() < 0) {
         log_error("Failed to initialize USB subsystem");

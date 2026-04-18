@@ -8,6 +8,8 @@
 *.lib
 itr4m
 tr4mpass
+tests/run_tests
+tests/run_mock_tests
 
 # OS files
 .DS_Store
