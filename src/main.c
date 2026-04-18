@@ -13,12 +13,16 @@
 #include "bypass/bypass.h"
 #include "bypass/path_a.h"
 #include "bypass/path_b.h"
+#include "activation/session.h"
+#include "activation/activation.h"
 #include "util/log.h"
 
 typedef struct {
     int verbose;
     int dry_run;
     int detect_only;
+    int activate_only;
+    int probe_albert;
     int force_path_a;
     int force_path_b;
     uint32_t cpid_override;
@@ -39,29 +43,38 @@ static void print_usage(const char *prog)
 {
     printf("Usage: %s [OPTIONS]\n\n"
            "Options:\n"
-           "  -v, --verbose       Enable debug logging\n"
-           "  -n, --dry-run       Show what would run, do not execute\n"
-           "  -d, --detect-only   Detect device and exit\n"
-           "  -a, --force-path-a  Force Path A (checkm8, A5-A11)\n"
-           "  -b, --force-path-b  Force Path B (identity, A12+)\n"
-           "      --cpid <hex>    Override CPID (e.g. --cpid 0x8960)\n"
-           "      --ecid <hex>    Override ECID (e.g. --ecid 0x1F70CB1331C)\n"
-           "  -h, --help          Show this help message\n", prog);
+           "  -v, --verbose          Enable debug logging\n"
+           "  -n, --dry-run          Show what would run, do not execute\n"
+           "  -d, --detect-only      Detect device and exit\n"
+           "      --activate-only    Online activation via Albert (normal mode)\n"
+           "      --probe-albert     Dump IngestBody fields + drmHandshake only\n"
+           "  -a, --force-path-a     Force Path A (checkm8, A5-A11)\n"
+           "  -b, --force-path-b     Force Path B (identity, A12+)\n"
+           "      --cpid <hex>       Override CPID (e.g. --cpid 0x8960)\n"
+           "      --ecid <hex>       Override ECID (e.g. --ecid 0x1F70CB1331C)\n"
+           "  -h, --help             Show this help message\n", prog);
 }
 
 static int parse_args(int argc, char *argv[], cli_opts_t *opts)
 {
-    enum { OPT_CPID = 256, OPT_ECID = 257 };
+    enum {
+        OPT_CPID          = 256,
+        OPT_ECID          = 257,
+        OPT_ACTIVATE_ONLY = 258,
+        OPT_PROBE_ALBERT  = 259,
+    };
 
     static const struct option longopts[] = {
-        { "verbose",      no_argument,       NULL, 'v' },
-        { "dry-run",      no_argument,       NULL, 'n' },
-        { "detect-only",  no_argument,       NULL, 'd' },
-        { "force-path-a", no_argument,       NULL, 'a' },
-        { "force-path-b", no_argument,       NULL, 'b' },
-        { "cpid",         required_argument, NULL, OPT_CPID },
-        { "ecid",         required_argument, NULL, OPT_ECID },
-        { "help",         no_argument,       NULL, 'h' },
+        { "verbose",        no_argument,       NULL, 'v' },
+        { "dry-run",        no_argument,       NULL, 'n' },
+        { "detect-only",    no_argument,       NULL, 'd' },
+        { "activate-only",  no_argument,       NULL, OPT_ACTIVATE_ONLY },
+        { "probe-albert",   no_argument,       NULL, OPT_PROBE_ALBERT  },
+        { "force-path-a",   no_argument,       NULL, 'a' },
+        { "force-path-b",   no_argument,       NULL, 'b' },
+        { "cpid",           required_argument, NULL, OPT_CPID },
+        { "ecid",           required_argument, NULL, OPT_ECID },
+        { "help",           no_argument,       NULL, 'h' },
         { NULL, 0, NULL, 0 }
     };
 
@@ -70,11 +83,15 @@ static int parse_args(int argc, char *argv[], cli_opts_t *opts)
     int c;
     while ((c = getopt_long(argc, argv, "vndabh", longopts, NULL)) != -1) {
         switch (c) {
-        case 'v': opts->verbose      = 1; break;
-        case 'n': opts->dry_run      = 1; break;
-        case 'd': opts->detect_only  = 1; break;
-        case 'a': opts->force_path_a = 1; break;
-        case 'b': opts->force_path_b = 1; break;
+        case 'v': opts->verbose        = 1; break;
+        case 'n': opts->dry_run        = 1; break;
+        case 'd': opts->detect_only    = 1; break;
+        case OPT_ACTIVATE_ONLY:
+                  opts->activate_only  = 1; break;
+        case OPT_PROBE_ALBERT:
+                  opts->probe_albert   = 1; break;
+        case 'a': opts->force_path_a   = 1; break;
+        case 'b': opts->force_path_b   = 1; break;
         case OPT_CPID:
             opts->cpid_override     = (uint32_t)strtoul(optarg, NULL, 16);
             opts->has_cpid_override = 1;
@@ -245,6 +262,65 @@ int main(int argc, char *argv[])
         log_info("Detect-only mode, exiting");
         cleanup(&dev);
         return 0;
+    }
+
+    if (opts.probe_albert) {
+        plist_t session_info = NULL;
+        int prc = -1;
+
+        if (!dev.handle) {
+            log_error("--probe-albert requires device in normal mode with lockdownd");
+            cleanup(&dev);
+            return 1;
+        }
+
+        log_info("=== Albert probe: IngestBody dump + drmHandshake only ===");
+
+        if (session_get_info(&dev, &session_info) == 0)
+            prc = session_probe_albert(&dev, session_info);
+
+        if (session_info) plist_free(session_info);
+        cleanup(&dev);
+        return (prc == 0) ? 0 : 1;
+    }
+
+    if (opts.activate_only) {
+        plist_t session_info  = NULL;
+        plist_t hs_response   = NULL;
+        plist_t activ_info    = NULL;
+        plist_t activ_record  = NULL;
+        int arc = -1;
+
+        if (!dev.handle) {
+            log_error("--activate-only requires device in normal mode with lockdownd");
+            cleanup(&dev);
+            return 1;
+        }
+
+        log_info("=== Online activation via Albert server ===");
+
+        if (session_get_info(&dev, &session_info) != 0)                          goto ao_done;
+        if (session_drm_handshake_online(&dev, session_info, &hs_response) != 0) goto ao_done;
+        if (session_create_activation_info(&dev, hs_response, &activ_info) != 0) goto ao_done;
+        if (session_device_activation_online(&dev, activ_info, &activ_record) != 0) goto ao_done;
+        if (session_activate(&dev, activ_record, hs_response) != 0)              goto ao_done;
+
+        arc = activation_is_activated(&dev);
+        if (arc == 1) {
+            printf("\n[+] Device activated successfully.\n");
+            arc = 0;
+        } else {
+            printf("\n[-] Activation step completed but device not yet activated.\n");
+            arc = 1;
+        }
+
+ao_done:
+        if (session_info) plist_free(session_info);
+        if (hs_response)  plist_free(hs_response);
+        if (activ_info)   plist_free(activ_info);
+        if (activ_record) plist_free(activ_record);
+        cleanup(&dev);
+        return arc < 0 ? 1 : arc;
     }
 
     register_modules();

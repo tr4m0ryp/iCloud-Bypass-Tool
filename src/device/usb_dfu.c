@@ -205,6 +205,19 @@ int usb_dfu_read_info(libusb_device_handle *handle, uint32_t *cpid,
         }
     }
 
+    /* When CPID is still zero after parsing, the serial is likely the
+     * uninitialised iBoot string -- device is not in true SecureROM DFU mode. */
+    if (cpid && *cpid == 0 &&
+        strncmp((char *)buf, "Apple Mobile Device", 19) == 0) {
+        log_error("DFU serial indicates device is NOT in SecureROM DFU mode.");
+        log_info("Expected format: 'CPID:XXXX CPRV:XX BDID:XX ECID:XXXX ...'");
+        log_info("Re-enter DFU using the correct button sequence:");
+        log_info("  Home button:  Power+Home 10s, release Power, hold Home 5s");
+        log_info("  Face ID:      Vol-Up, Vol-Down, hold Side to black screen,");
+        log_info("                Side+Vol-Down 5s, release Side, hold Vol-Down 10s");
+        log_info("Screen must stay completely BLACK (no Apple logo).");
+    }
+
     return 0;
 }
 

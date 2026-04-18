@@ -11,8 +11,9 @@
  *   4. deviceActivation (offline/online) -> activation record
  *   5. HandleActivationInfoWithSessionRequest -> finalize
  *
- * This tool uses OFFLINE mode (design decision D2): stages 2 and 4
- * construct responses locally instead of calling albert.apple.com.
+ * Offline mode: stages 2 and 4 construct responses locally (requires
+ * patched mobileactivationd -- Path A jailbreak only).
+ * Online mode: stages 2 and 4 contact albert.apple.com directly.
  */
 
 #ifndef SESSION_H
@@ -61,5 +62,41 @@ int session_create_activation_info(device_info_t *dev,
  */
 int session_activate(device_info_t *dev, plist_t activation_record,
                      plist_t handshake_response);
+
+/*
+ * session_drm_handshake_online -- Online stage 2: POST to Albert.
+ * Serializes session_info to binary plist and POSTs to
+ * albert.apple.com/deviceservices/drmHandshake. Parses the response
+ * with libplist (handles both XML and binary formats).
+ * On success, *handshake_response is a new plist. Caller frees.
+ * Returns 0 on success, -1 on error.
+ */
+int session_drm_handshake_online(device_info_t *dev, plist_t session_info,
+                                 plist_t *handshake_response);
+
+/*
+ * session_device_activation_online -- Online stage 4: POST to Albert.
+ * URL-encodes activation_info as XML plist and POSTs to
+ * albert.apple.com/deviceservices/deviceActivation.
+ * On success, *activation_record is a new plist. Caller frees.
+ * Returns 0 on success, -1 on error.
+ */
+int session_device_activation_online(device_info_t *dev,
+                                     plist_t activation_info,
+                                     plist_t *activation_record);
+
+/*
+ * session_probe_albert -- Diagnostic probe: dump CollectionBlob IngestBody
+ * fields and run only the drmHandshake stage against Albert.
+ *
+ * Prints every key found in the signed IngestBody JSON so the caller can
+ * confirm which fields (including iOS version) are inside vs. outside the
+ * ECDSA signature boundary.  Then POSTs to drmHandshake and reports the
+ * HTTP status and top-level keys of the response — without proceeding to
+ * deviceActivation (which would trigger FMiP rejection on locked devices).
+ *
+ * Returns 0 on success (drmHandshake HTTP 200), -1 on error.
+ */
+int session_probe_albert(device_info_t *dev, plist_t session_info);
 
 #endif /* SESSION_H */

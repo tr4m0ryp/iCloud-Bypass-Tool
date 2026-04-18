@@ -189,8 +189,10 @@ install_deps() {
                 apt)    install_deps_linux_apt ;;
                 dnf)    install_deps_linux_dnf ;;
                 pacman)
-                    msg_warn "Arch Linux detected. Install manually:"
-                    msg_info "  sudo pacman -S libimobiledevice libirecovery libusb libplist openssl pkg-config base-devel"
+                    msg_warn "Arch Linux detected. Install from AUR:"
+                    msg_info "  yay -S libimobiledevice libirecovery libusb libplist openssl pkg-config base-devel"
+                    msg_info "  or: paru -S libimobiledevice-git libirecovery-git"
+                    msg_info "Re-run this script after installing."
                     exit 1
                     ;;
             esac
@@ -276,10 +278,30 @@ check_normal() {
     return 1
 }
 
+check_wsl_usb_passthrough() {
+    msg_warn "WSL detected: USB devices require passthrough via usbipd-win."
+    echo ""
+    echo "  To pass through your iOS device:"
+    echo "  1. In Windows PowerShell (Admin):"
+    echo "       usbipd list                     # find your device bus ID"
+    echo "       usbipd bind --busid <id>"
+    echo "       usbipd attach --busid <id> --wsl"
+    echo "  2. Install usbipd if not present:"
+    echo "       winget install usbipd"
+    echo "  3. Re-run ./start.sh after attaching."
+    echo ""
+    if lsusb 2>/dev/null | grep -q "05ac"; then
+        msg_ok "Apple device visible via lsusb -- USB passthrough is working."
+    else
+        msg_err "No Apple USB device visible in WSL. Complete the passthrough steps above."
+    fi
+}
+
 wait_for_device() {
     local timeout=60
     local elapsed=0
     local interval=2
+    local wsl_warned=0
 
     msg_info "Connect your iOS device via USB cable."
     echo ""
@@ -295,6 +317,14 @@ wait_for_device() {
             DEVICE_MODE="normal"
             msg_ok "Device detected in normal mode!"
             return 0
+        fi
+
+        # Show usbipd guidance once after the first poll cycle on WSL
+        if [ "$DETECTED_OS" = "wsl" ] && [ "$wsl_warned" -eq 0 ] && [ "$elapsed" -ge "$interval" ]; then
+            echo ""
+            check_wsl_usb_passthrough
+            echo ""
+            wsl_warned=1
         fi
 
         printf "\r${CYAN}[*]${RESET} Waiting for device... %ds / %ds" "$elapsed" "$timeout"
@@ -314,6 +344,17 @@ wait_for_device() {
 parse_device_info() {
     local output
     output="$("$BINARY" --detect-only 2>&1)" || true
+
+    if [ -z "$output" ]; then
+        msg_err "Device query returned no output (binary may have crashed or device disconnected)."
+        msg_info "Ensure the device is still connected and try again."
+        msg_info "On Linux: check that usbmuxd is running: sudo systemctl status usbmuxd"
+        DEV_MODEL="" DEV_CHIP_NAME="" DEV_CPID="" DEV_IOS=""
+        DEV_SERIAL="" DEV_IMEI="" DEV_CHECKM8="" DEV_DFU=""
+        DEV_BYPASS="(none)"
+        DEV_STATUS="UNSUPPORTED"
+        return 0
+    fi
 
     # Parse fields from tr4mpass --detect-only output
     DEV_MODEL="$(echo "$output" | grep "Product Type:" | sed 's/.*Product Type:[[:space:]]*//')"
@@ -336,6 +377,7 @@ parse_device_info() {
         DEV_BYPASS="(none)"
         DEV_STATUS="UNSUPPORTED"
     fi
+    return 0
 }
 
 display_device_info() {
@@ -501,11 +543,16 @@ main() {
         msg_info "Device in DFU mode. Querying chip info..."
         parse_device_info
 
-        local dfu_bypass="auto-detect"
-        if [ "$DEV_CHECKM8" = "YES" ]; then
-            dfu_bypass="Path A (checkm8, A5-A11)"
-        elif [ -n "$DEV_CPID" ] && [ "$DEV_CPID" != "0x0000" ]; then
-            dfu_bypass="Path B (identity, A12+)"
+        # Derive real support status from parsed CPID (same logic as normal-mode branch)
+        if [ -z "$DEV_CPID" ] || [ "$DEV_CPID" = "0x0000" ]; then
+            msg_warn "Chip ID could not be read from DFU serial descriptor."
+            msg_info "This usually means the device is not in true SecureROM DFU mode."
+            msg_info "Re-enter DFU mode using the precise button sequence and try again."
+            msg_info "  Home button:  Power+Home 10s, release Power, hold Home 5s"
+            msg_info "  Face ID:      Vol-Up, Vol-Down, hold Side to black screen,"
+            msg_info "                Side+Vol-Down 5s, release Side, hold Vol-Down 10s"
+            msg_info "Screen must stay completely BLACK (no Apple logo)."
+            exit 1
         fi
 
         echo ""
@@ -514,11 +561,18 @@ main() {
         echo "========================================"
         printf "  %-12s %s\n" "Mode:" "DFU"
         printf "  %-12s %s\n" "Chip:" "${DEV_CHIP_NAME:-(unknown)} (CPID: ${DEV_CPID:-(unknown)})"
-        printf "  %-12s %s\n" "Bypass:" "$dfu_bypass"
-        printf "  %-12s %s\n" "Status:" "SUPPORTED (DFU detected)"
+        printf "  %-12s %s\n" "Bypass:" "$DEV_BYPASS"
+        printf "  %-12s %s\n" "Status:" "$DEV_STATUS"
         echo "========================================"
         echo ""
-        msg_ok "Device in DFU mode. Ready to proceed."
+
+        if [ "$DEV_STATUS" = "UNSUPPORTED" ]; then
+            msg_err "UNSUPPORTED: Device chip could not be identified or is not in the chip database."
+            msg_info "This tool supports A5 through A17 chips."
+            exit 1
+        fi
+
+        msg_ok "Device is supported. Ready to proceed."
         printf "${BOLD}Press Enter to start bypass...${RESET}"
         read -r
     fi

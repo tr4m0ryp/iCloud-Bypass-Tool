@@ -4,7 +4,7 @@ LDFLAGS  =
 
 # Library discovery via pkg-config (warn but do not fail if missing)
 PKG_LIBS = libimobiledevice-1.0 libirecovery-1.0 libusb-1.0 \
-           libplist-2.0 openssl
+           libplist-2.0 openssl libcurl
 
 CFLAGS  += $(shell pkg-config --cflags $(PKG_LIBS) 2>/dev/null)
 LDFLAGS += $(shell pkg-config --libs   $(PKG_LIBS) 2>/dev/null)
@@ -26,6 +26,20 @@ $(TARGET): $(OBJS)
 
 clean:
 	find src -name '*.o' -delete
-	rm -f $(TARGET)
+	rm -f $(TARGET) $(TEST_TARGET)
 
-.PHONY: all clean
+# ------------------------------------------------------------------ #
+# Test target: compile only hardware-independent units                #
+# ------------------------------------------------------------------ #
+
+TEST_UNITS  = src/device/chip_db.c src/bypass/bypass.c src/util/log.c
+TEST_TARGET = tests/run_tests
+TEST_CFLAGS = $(CFLAGS) -Iinclude -DUNIT_TEST
+
+test: $(TEST_TARGET)
+	./$(TEST_TARGET)
+
+$(TEST_TARGET): tests/test_sections.c $(TEST_UNITS)
+	$(CC) $(TEST_CFLAGS) -o $@ $^
+
+.PHONY: all clean test

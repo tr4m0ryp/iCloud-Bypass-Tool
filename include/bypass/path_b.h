@@ -33,10 +33,18 @@ int path_b_read_serial(device_info_t *dev, char *buf, size_t len);
 
 /*
  * path_b_write_serial -- Write a modified serial descriptor to the device.
- * Sends a USB control transfer to overwrite the serial string descriptor
- * in the DFU interface.
+ * Routes through path_b_write_serial_irecovery() which uses libirecovery
+ * setenv commands from recovery mode (SET_DESCRIPTOR is rejected by A12+ BootROM).
  * Returns 0 on success, -1 on error.
  */
 int path_b_write_serial(device_info_t *dev, const char *new_serial);
+
+/*
+ * path_b_write_serial_irecovery -- Write serial via iRecovery setenv in recovery mode.
+ * Device must already be in recovery mode (PID 0x1281) before calling.
+ * Used internally by path_b.c step_manipulate_identity().
+ * Returns 0 on success, -1 on error.
+ */
+int path_b_write_serial_irecovery(device_info_t *dev, const char *new_serial);
 
 #endif /* PATH_B_H */

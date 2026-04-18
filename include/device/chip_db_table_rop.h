@@ -178,7 +178,7 @@
     { .cpid = 0x8110, .name = "A15",  .marketing = "iPhone 13 / iPhone SE (3rd gen)"   },
     { .cpid = 0x8112, .name = "M2",   .marketing = "iPad Pro (6th gen) / MacBook (M2)" },
     { .cpid = 0x8120, .name = "A16",  .marketing = "iPhone 14 Pro / iPhone 14 Pro Max" },
-    { .cpid = 0x8130, .name = "A17",  .marketing = "iPhone 15 Pro / iPhone 15 Pro Max" },
+    { .cpid = 0x8130, .name = "A17P", .marketing = "iPhone 15 Pro / iPhone 15 Pro Max" },
 
     /* Null-terminated sentinel */
     { 0 }

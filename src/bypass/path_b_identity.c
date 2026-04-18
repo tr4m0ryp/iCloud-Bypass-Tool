@@ -10,15 +10,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <libusb-1.0/libusb.h>
+#include <libirecovery.h>
 
 #include "bypass/path_b.h"
 #include "device/usb_dfu.h"
 #include "util/usb_helpers.h"
 #include "util/log.h"
 
-/* USB descriptor request types */
+/* USB standard request codes (USB 2.0 spec table 9-4) */
 #define USB_REQ_GET_DESCRIPTOR  0x06
-#define USB_REQ_SET_DESCRIPTOR  0x07
 #define USB_DT_STRING           0x03
 
 /* Serial string descriptor index for Apple DFU devices */
@@ -29,6 +29,9 @@
 
 /* Maximum USB string descriptor length per USB 2.0 spec */
 #define USB_DESC_MAX_LEN        255
+
+/* Apple recovery mode USB product ID */
+#define APPLE_RECOVERY_PID      0x1281
 
 /*
  * usb_get_string_descriptor -- GET_DESCRIPTOR control transfer for a
@@ -105,117 +108,155 @@ static int utf16le_to_ascii(const uint8_t *desc, int desc_len,
 }
 
 /*
- * ascii_to_utf16le_desc -- Build USB string descriptor from ASCII.
- * Returns total descriptor length, or -1 on error.
+ * path_b_read_serial -- Read device serial string in DFU or recovery mode.
+ *
+ * DFU mode (dev->usb set): uses USB GET_DESCRIPTOR control transfer.
+ * Recovery mode (dev->usb NULL): uses libirecovery to read serial_string
+ * from the irecv_device_info struct (iBoot exposes it in recovery).
  */
-static int ascii_to_utf16le_desc(const char *ascii,
-                                 uint8_t *desc, size_t desc_max)
-{
-    size_t  slen;
-    size_t  total;
-    size_t  i;
-
-    if (!ascii || !desc || desc_max < 4)
-        return -1;
-
-    slen  = strlen(ascii);
-    total = 2 + (slen * 2);
-
-    if (total > desc_max || total > USB_DESC_MAX_LEN)
-        return -1;
-
-    desc[0] = (uint8_t)total;      /* bLength           */
-    desc[1] = USB_DT_STRING;       /* bDescriptorType   */
-
-    for (i = 0; i < slen; i++) {
-        desc[2 + (i * 2)]     = (uint8_t)ascii[i];   /* low byte  */
-        desc[2 + (i * 2) + 1] = 0x00;                /* high byte */
-    }
-
-    return (int)total;
-}
-
-/* path_b_read_serial -- Read serial descriptor from DFU, decode to ASCII. */
 int path_b_read_serial(device_info_t *dev, char *buf, size_t len)
 {
-    uint8_t desc[USB_DESC_MAX_LEN];
-    int     desc_len;
-
     if (!dev || !buf || len == 0) {
         log_error("[path_b_id] Invalid arguments to read_serial");
         return -1;
     }
 
-    if (!dev->usb) {
-        log_error("[path_b_id] No USB handle -- device not in DFU mode?");
-        return -1;
+    if (dev->usb) {
+        /* DFU mode: USB GET_DESCRIPTOR */
+        uint8_t desc[USB_DESC_MAX_LEN];
+        int desc_len = usb_get_string_descriptor(dev->usb, DFU_SERIAL_DESC_INDEX,
+                                                 desc, sizeof(desc));
+        if (desc_len < 0)
+            return -1;
+
+        if (utf16le_to_ascii(desc, desc_len, buf, len) < 0) {
+            log_error("[path_b_id] Failed to decode serial descriptor");
+            return -1;
+        }
+        log_debug("[path_b_id] Read serial (DFU): %s", buf);
+        return 0;
     }
 
-    desc_len = usb_get_string_descriptor(dev->usb, DFU_SERIAL_DESC_INDEX,
-                                         desc, sizeof(desc));
-    if (desc_len < 0)
-        return -1;
+    /* Recovery mode: use libirecovery */
+    {
+        irecv_client_t client = NULL;
+        irecv_error_t  err;
+        const struct irecv_device_info *info;
 
-    if (utf16le_to_ascii(desc, desc_len, buf, len) < 0) {
-        log_error("[path_b_id] Failed to decode serial descriptor");
-        return -1;
+        if (dev->ecid != 0)
+            err = irecv_open_with_ecid_and_attempts(&client,
+                                                    (uint64_t)dev->ecid, 5);
+        else
+            err = irecv_open_with_ecid_and_attempts(&client, 0, 5);
+
+        if (err != IRECV_E_SUCCESS || !client) {
+            log_error("[path_b_id] iRecovery open failed for serial read: %s",
+                      irecv_strerror(err));
+            return -1;
+        }
+
+        info = irecv_get_device_info(client);
+        if (!info || !info->serial_string || info->serial_string[0] == '\0') {
+            log_error("[path_b_id] iRecovery: no serial string available");
+            irecv_close(client);
+            return -1;
+        }
+
+        strncpy(buf, info->serial_string, len - 1);
+        buf[len - 1] = '\0';
+        log_debug("[path_b_id] Read serial (recovery): %s", buf);
+        irecv_close(client);
+        return 0;
     }
-
-    log_debug("[path_b_id] Read serial: %s", buf);
-    return 0;
 }
 
 /*
- * path_b_write_serial -- Write modified serial descriptor via SET_DESCRIPTOR.
+ * path_b_write_serial_irecovery -- Set serial-number env var in recovery mode.
  *
- * TODO: A12+ DFU serial resides in writable SRAM. The exact write offset
- * varies by chip (T8020/T8030/T8101/T8110/T8120/T8103/T8112) and must be
- * determined by hardware testing. May need vendor-specific control transfer
- * instead of standard SET_DESCRIPTOR if the DFU firmware rejects it.
+ * Apple's A12+ BootROM rejects SET_DESCRIPTOR with LIBUSB_ERROR_PIPE.
+ * Instead, this function uses libirecovery to send "setenv serial-number"
+ * from recovery mode (PID 0x1281), which iBoot accepts before booting iOS.
+ * The PWND marker in the serial is then visible to mobileactivationd.
+ *
+ * Device must already be in recovery mode before this is called.
+ * path_b.c:step_reboot_to_recovery() handles the DFU -> recovery transition.
+ */
+int path_b_write_serial_irecovery(device_info_t *dev, const char *new_serial)
+{
+    irecv_client_t client = NULL;
+    irecv_error_t  err;
+    const struct irecv_device_info *info;
+    char           cmd[DFU_SERIAL_MAX + 32];
+    int            rc = -1;
+
+    if (!dev || !new_serial) {
+        log_error("[path_b_id] Invalid arguments to write_serial_irecovery");
+        return -1;
+    }
+
+    /* Open device -- prefer ECID match to avoid touching wrong device.
+     * irecv_open_with_ecid with ecid=0 matches any connected device. */
+    if (dev->ecid != 0)
+        err = irecv_open_with_ecid_and_attempts(&client, (uint64_t)dev->ecid, 5);
+    else
+        err = irecv_open_with_ecid_and_attempts(&client, 0, 5);
+
+    if (err != IRECV_E_SUCCESS || !client) {
+        log_error("[path_b_id] Could not open device in recovery mode: %s",
+                  irecv_strerror(err));
+        return -1;
+    }
+
+    /* Verify the device is actually in recovery (not DFU or normal) */
+    info = irecv_get_device_info(client);
+    if (!info || info->pid != APPLE_RECOVERY_PID) {
+        log_error("[path_b_id] Device is not in recovery mode (pid=0x%04X)",
+                  info ? (unsigned)info->pid : 0);
+        irecv_close(client);
+        return -1;
+    }
+
+    /* Set the serial-number environment variable */
+    err = irecv_setenv(client, "serial-number", new_serial);
+    if (err != IRECV_E_SUCCESS) {
+        log_error("[path_b_id] irecv_setenv serial-number failed: %s",
+                  irecv_strerror(err));
+        goto done;
+    }
+    log_info("[path_b_id] setenv serial-number succeeded");
+
+    /* Persist to NVRAM -- non-fatal if saveenv is unsupported by iBoot */
+    err = irecv_saveenv(client);
+    if (err != IRECV_E_SUCCESS)
+        log_warn("[path_b_id] saveenv failed (%s), continuing (in-session only)",
+                 irecv_strerror(err));
+    else
+        log_info("[path_b_id] Serial persisted to NVRAM via saveenv");
+
+    (void)cmd; /* cmd buffer no longer needed -- keeping for future use */
+
+    log_info("[path_b_id] Serial set via iRecovery: %s", new_serial);
+    rc = 0;
+
+done:
+    irecv_close(client);
+    return rc;
+}
+
+/*
+ * path_b_write_serial -- Write modified serial to the device.
+ * Routes through iRecovery setenv (recovery mode) since A12+ BootROM
+ * STALLs the USB SET_DESCRIPTOR request.
  */
 int path_b_write_serial(device_info_t *dev, const char *new_serial)
 {
-    uint8_t desc[USB_DESC_MAX_LEN];
-    int     desc_len;
-    int     rc;
-
     if (!dev || !new_serial) {
         log_error("[path_b_id] Invalid arguments to write_serial");
         return -1;
     }
 
-    if (!dev->usb) {
-        log_error("[path_b_id] No USB handle -- device not in DFU mode?");
-        return -1;
-    }
-
-    desc_len = ascii_to_utf16le_desc(new_serial, desc, sizeof(desc));
-    if (desc_len < 0) {
-        log_error("[path_b_id] Serial string too long for USB descriptor");
-        return -1;
-    }
-
-    /* SET_DESCRIPTOR: host-to-device, standard, device recipient */
-    rc = usb_ctrl_transfer(
-        dev->usb,
-        0x00,                                               /* bmRequestType  */
-        USB_REQ_SET_DESCRIPTOR,                             /* bRequest       */
-        (uint16_t)((USB_DT_STRING << 8) | DFU_SERIAL_DESC_INDEX),
-        0x0409,                                             /* wIndex (lang)  */
-        desc,                                               /* data           */
-        (uint16_t)desc_len,                                 /* wLength        */
-        DFU_USB_TIMEOUT                                     /* timeout ms     */
-    );
-
-    if (rc < 0) {
-        log_warn("[path_b_id] SET_DESCRIPTOR returned: %s",
-                 libusb_error_name(rc));
-        usb_print_error(rc);
-        return -1;
-    }
-
-    log_info("[path_b_id] Serial descriptor written (%d bytes)", desc_len);
-    return 0;
+    log_info("[path_b_id] Writing serial via iRecovery (recovery mode)...");
+    return path_b_write_serial_irecovery(dev, new_serial);
 }
 
 /* path_b_manipulate_identity -- Read, append PWND marker, write, verify. */
